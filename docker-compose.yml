@@ -1,0 +1,59 @@
+services:
+  mongo:
+    image: mongo:7
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    volumes:
+      - mongo-data:/data/db
+    ports:
+      - "127.0.0.1:27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mongo-init:
+    image: mongo:7
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+    command:
+      - mongosh
+      - --host
+      - mongo:27017
+      - --quiet
+      - --eval
+      - >-
+        try { rs.status() } catch (e) {
+        rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] }) };
+        while (!db.hello().isWritablePrimary) { sleep(500) }
+
+  backend:
+    build: ./backend
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-insecure-change-me}
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,backend
+      APP_TIME_ZONE: ${APP_TIME_ZONE:-UTC}
+      MONGO_URI: mongodb://mongo:27017/?replicaSet=rs0
+      MONGO_DB_NAME: appointment_scheduling
+    command:
+      - sh
+      - -c
+      - python manage.py init_mongo && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:8080:80"
+
+volumes:
+  mongo-data:

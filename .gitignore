@@ -1,0 +1,8 @@
+.env
+mongodb-data/
+node_modules/
+frontend/dist/
+backend/.venv/
+__pycache__/
+*.pyc
+.claude/
