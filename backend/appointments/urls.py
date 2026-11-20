@@ -1,8 +1,10 @@
 from django.urls import path
 
 from . import views
+from .healthz import HealthzView
 
 urlpatterns = [
+    path("healthz/", HealthzView.as_view(), name="healthz"),
     path("customers/", views.CustomerListView.as_view(), name="customer-list"),
     path("customers/<str:customer_id>/", views.CustomerDetailView.as_view(), name="customer-detail"),
     path("appointment-types/", views.AppointmentTypeListView.as_view(), name="appointment-type-list"),
