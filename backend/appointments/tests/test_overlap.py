@@ -22,6 +22,24 @@ class OverlapTests(MongoApiTestCase):
         self.assertEqual(self.book(self.customer_id, self.type_id, future_time(hour=9)).status_code, 201)
         self.assertEqual(self.book(self.customer_id, self.type_id, future_time(hour=10)).status_code, 201)
 
+    def test_rejected_booking_leaves_no_appointment_behind(self):
+        self.assertEqual(self.book(self.customer_id, self.type_id, future_time(hour=9)).status_code, 201)
+        self.assertEqual(self.book(self.customer_id, self.type_id, future_time(hour=9, minute=30)).status_code, 409)
+
+        listed = self.api.get("/api/appointments/").json()
+        self.assertEqual(len(listed), 1)
+
+    def test_reschedule_may_overlap_its_own_old_time(self):
+        booked = self.book(self.customer_id, self.type_id, future_time(hour=9)).json()
+        response = self.api.post(
+            f"/api/appointments/{booked['id']}/reschedule/",
+            {"start_at": future_time(hour=9, minute=30).isoformat(), "end_at": future_time(hour=10, minute=30).isoformat()},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.book(self.customer_id, self.type_id, future_time(hour=9), minutes=15).status_code, 201)
+        self.assertEqual(self.book(self.customer_id, self.type_id, future_time(hour=10)).status_code, 409)
+
     def test_concurrent_requests_for_same_slot_allow_exactly_one(self):
         payload = appointment_payload(self.customer_id, self.type_id, future_time(hour=13))
         workers = 8

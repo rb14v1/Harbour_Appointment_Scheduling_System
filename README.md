@@ -1,6 +1,6 @@
 # Appointment Scheduling Management System
 
-Single-admin appointment scheduler. React + Vite + TypeScript frontend, Django REST Framework backend using PyMongo, and a local MongoDB replica set. No authentication.
+Single-admin appointment scheduler. React + Vite + TypeScript frontend, Django REST Framework backend using PyMongo, and a local standalone MongoDB server. No authentication.
 
 ## 1. One-time setup
 
@@ -38,7 +38,7 @@ cd backend
 .\.venv\Scripts\python manage.py init_mongo
 .\.venv\Scripts\python manage.py runserver 8000
 ```
-`init_mongo` sets up the replica set on first run and applies any pending migrations. Re-running it is safe and never deletes data.
+`init_mongo` applies any pending migrations. Re-running it is safe and never deletes data.
 
 **Window 3: Frontend**
 ```powershell
@@ -63,7 +63,18 @@ Rules for new migrations:
 - Make `up` idempotent (for example, `create_index` with the same name and spec).
 - Never drop data in a migration unless the change is deliberate and reviewed.
 
-## 4. Tests
+## 4. Repair
+
+If the app stops mid-operation (for example, the process is killed), stale booking slots can be left behind. Check and clean them with:
+
+```powershell
+cd backend
+.\.venv\Scripts\python manage.py repair_mongo
+```
+
+It removes slots that no live appointment owns and reports active appointments that are missing slots.
+
+## 5. Tests
 
 Start MongoDB (Window 1) and run `init_mongo` once (Window 2), then:
 
@@ -82,7 +93,8 @@ npm test
 ## Business rules
 
 - Times are 15-minute aligned, end after start, and not in the past.
-- One shared calendar. Overlaps are rejected with HTTP 409 (unique slot index inside a transaction).
+- One shared calendar. Overlaps are rejected with HTTP 409 by a unique index on booked 15-minute slots.
+- The app runs on a standalone MongoDB server. It does not use transactions.
 - Cancelled appointments free their slots. Completed appointments keep theirs.
 - Only scheduled appointments can be rescheduled, completed or cancelled.
 - Customers and appointment types referenced by appointments cannot be deleted (409).

@@ -4,7 +4,6 @@ from bson import ObjectId
 from pymongo.errors import BulkWriteError, DuplicateKeyError
 
 from .exceptions import AppError, ConflictError, NotFoundError
-from .mongo import get_client
 from .repositories import appointment_types as types_repo
 from .repositories import appointments as appointments_repo
 from .repositories import customers as customers_repo
@@ -20,6 +19,7 @@ RECENT_LIMIT = 10
 DUPLICATE_EMAIL = "A customer with this email already exists."
 DUPLICATE_TYPE = "An appointment type with this name already exists."
 OVERLAP = "The selected time overlaps another active appointment."
+CHANGED_ELSEWHERE = "The appointment was changed by another request. Refresh and try again."
 
 
 # Id and reference helpers
@@ -70,12 +70,14 @@ def _slot_documents(appointment_id, start, end):
     return [{"slot_at": slot, "appointment_id": appointment_id} for slot in slot_starts(start, end)]
 
 
-def _run_transaction(work):
-    """Run work in a Mongo transaction. Overlap violations become HTTP 409."""
+def _claim_slots(appointment_id, slot_docs):
+    """Insert slot blocks. The unique slot index rejects overlaps; on conflict, remove what was inserted here."""
+    if not slot_docs:
+        return
     try:
-        with get_client().start_session() as session:
-            return session.with_transaction(work)
+        slots_repo.insert_slots(slot_docs)
     except (BulkWriteError, DuplicateKeyError) as exc:
+        slots_repo.delete_slots_at(appointment_id, [doc["slot_at"] for doc in slot_docs])
         raise ConflictError(OVERLAP) from exc
 
 
@@ -241,11 +243,14 @@ def create_appointment(data):
         "updated_at": now,
     }
 
-    def work(session):
-        appointments_repo.insert_appointment(appointment, session=session)
-        slots_repo.insert_slots(_slot_documents(appointment["_id"], start, end), session=session)
-
-    _run_transaction(work)
+    # Save the appointment first, then its slots. If the slots are refused or fail,
+    # remove the appointment so no booking is left without its time reserved.
+    appointments_repo.insert_appointment(appointment)
+    try:
+        _claim_slots(appointment["_id"], _slot_documents(appointment["_id"], start, end))
+    except Exception:
+        appointments_repo.delete_appointment(appointment["_id"])
+        raise
     return appointment
 
 
@@ -278,46 +283,49 @@ def reschedule_appointment(appointment_id, data):
     oid = _path_id(appointment_id, "Appointment")
     start, end = _validated_window(data["start_at"], data["end_at"])
 
-    def work(session):
-        current = appointments_repo.get_appointment(oid, session=session)
-        if current is None:
-            raise NotFoundError("Appointment not found.")
-        if current["status"] != SCHEDULED:
-            raise ConflictError(f"{current['status'].capitalize()} appointments cannot be rescheduled.")
-        slots_repo.delete_slots(oid, session=session)
-        slots_repo.insert_slots(_slot_documents(oid, start, end), session=session)
-        return appointments_repo.update_appointment(
-            oid,
-            {
-                "start_at": start,
-                "end_at": end,
-                "date": local_date_string(start),
-                "updated_at": now_utc(),
-            },
-            session=session,
-        )
+    current = appointments_repo.get_appointment(oid)
+    if current is None:
+        raise NotFoundError("Appointment not found.")
+    if current["status"] != SCHEDULED:
+        raise ConflictError(f"{current['status'].capitalize()} appointments cannot be rescheduled.")
 
-    return _run_transaction(work)
+    # Claim only the new blocks. Blocks the appointment already holds are kept,
+    # so the old booking is never released before its replacement is secured.
+    old_times = set(slot_starts(current["start_at"], current["end_at"]))
+    new_docs = _slot_documents(oid, start, end)
+    new_times = {doc["slot_at"] for doc in new_docs}
+    to_claim = [doc for doc in new_docs if doc["slot_at"] not in old_times]
+    _claim_slots(oid, to_claim)
+
+    updated = appointments_repo.update_appointment(
+        oid,
+        {"start_at": start, "end_at": end, "date": local_date_string(start), "updated_at": now_utc()},
+        extra_filter={"status": SCHEDULED, "start_at": current["start_at"], "end_at": current["end_at"]},
+    )
+    if updated is None:
+        slots_repo.delete_slots_at(oid, [doc["slot_at"] for doc in to_claim])
+        raise ConflictError(CHANGED_ELSEWHERE)
+
+    released = sorted(old_times - new_times)
+    if released:
+        slots_repo.delete_slots_at(oid, released)
+    return updated
 
 
 def _change_status(appointment_id, new_status):
     oid = _path_id(appointment_id, "Appointment")
-
-    def work(session):
-        current = appointments_repo.get_appointment(oid, session=session)
-        if current is None:
+    updated = appointments_repo.update_appointment(
+        oid,
+        {"status": new_status, "updated_at": now_utc()},
+        extra_filter={"status": SCHEDULED},
+    )
+    if updated is None:
+        if appointments_repo.get_appointment(oid) is None:
             raise NotFoundError("Appointment not found.")
-        if current["status"] != SCHEDULED:
-            raise ConflictError(f"Only scheduled appointments can be {new_status}.")
-        if new_status == CANCELLED:
-            slots_repo.delete_slots(oid, session=session)
-        return appointments_repo.update_appointment(
-            oid,
-            {"status": new_status, "updated_at": now_utc()},
-            session=session,
-        )
-
-    return _run_transaction(work)
+        raise ConflictError(f"Only scheduled appointments can be {new_status}.")
+    if new_status == CANCELLED:
+        slots_repo.delete_slots(oid)
+    return updated
 
 
 def complete_appointment(appointment_id):
@@ -326,6 +334,32 @@ def complete_appointment(appointment_id):
 
 def cancel_appointment(appointment_id):
     return _change_status(appointment_id, CANCELLED)
+
+
+# Repair
+
+def repair_slots():
+    """Remove slot blocks that no live appointment owns. Report active appointments with missing blocks."""
+    appointments = {doc["_id"]: doc for doc in appointments_repo.all_appointments()}
+    stale_ids = []
+    held = set()
+    for slot in slots_repo.all_slots():
+        owner = appointments.get(slot["appointment_id"])
+        in_range = owner is not None and owner["start_at"] <= slot["slot_at"] < owner["end_at"]
+        if owner is None or owner["status"] == CANCELLED or not in_range:
+            stale_ids.append(slot["_id"])
+        else:
+            held.add((slot["appointment_id"], slot["slot_at"]))
+
+    removed = slots_repo.delete_slots_by_ids(stale_ids) if stale_ids else 0
+    missing = sum(
+        1
+        for owner in appointments.values()
+        if owner["status"] != CANCELLED
+        for slot_at in slot_starts(owner["start_at"], owner["end_at"])
+        if (owner["_id"], slot_at) not in held
+    )
+    return {"removed": removed, "missing": missing}
 
 
 # Dashboard

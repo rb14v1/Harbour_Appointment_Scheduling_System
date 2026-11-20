@@ -7,22 +7,31 @@ def _collection():
     return get_db()[APPOINTMENTS]
 
 
-def insert_appointment(doc, session=None):
-    _collection().insert_one(doc, session=session)
+def insert_appointment(doc):
+    _collection().insert_one(doc)
     return doc
 
 
-def get_appointment(appointment_id, session=None):
-    return _collection().find_one({"_id": appointment_id}, session=session)
+def get_appointment(appointment_id):
+    return _collection().find_one({"_id": appointment_id})
 
 
-def update_appointment(appointment_id, fields, session=None):
+def update_appointment(appointment_id, fields, extra_filter=None):
+    """Update one appointment. extra_filter makes the update conditional (optimistic check)."""
+    query = {"_id": appointment_id, **(extra_filter or {})}
     return _collection().find_one_and_update(
-        {"_id": appointment_id},
+        query,
         {"$set": fields},
         return_document=ReturnDocument.AFTER,
-        session=session,
     )
+
+
+def delete_appointment(appointment_id):
+    return _collection().delete_one({"_id": appointment_id}).deleted_count == 1
+
+
+def all_appointments():
+    return list(_collection().find())
 
 
 def find_appointments(query):

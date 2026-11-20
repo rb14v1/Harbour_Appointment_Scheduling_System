@@ -1,4 +1,4 @@
-# Starts the project's local MongoDB (replica set rs0) on 127.0.0.1:27017.
+# Starts the project's local standalone MongoDB on 127.0.0.1:27017.
 # Data is stored in <project>\mongodb-data. Keep this window open while working.
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
@@ -14,4 +14,4 @@ if (-not $Mongod) {
 
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 
-& $Mongod.FullName --replSet rs0 --port 27017 --bind_ip 127.0.0.1 --dbpath $DataDir
+& $Mongod.FullName --port 27017 --bind_ip 127.0.0.1 --dbpath $DataDir

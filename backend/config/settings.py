@@ -33,7 +33,7 @@ DATABASES = {}
 USE_TZ = True
 TIME_ZONE = os.environ.get("APP_TIME_ZONE", "UTC")
 
-MONGO_URI = os.environ.get("MONGO_URI", "mongodb://127.0.0.1:27017/?replicaSet=rs0")
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://127.0.0.1:27017/")
 if TESTING:
     MONGO_DB_NAME = os.environ.get("MONGO_TEST_DB_NAME", "appointment_scheduling_test")
 else:
