@@ -32,7 +32,7 @@ jobs:
             context: "backend"
             port: 8080
             health: "/healthz"
-            env: "DJANGO_ALLOWED_HOSTS=.azurecontainerapps.io,localhost,127.0.0.1 DJANGO_DEBUG=False DJANGO_SECRET_KEY=harbour-preflight-mbtp9l0pzbdx2jkawwua9f DEBUG=False DJANGO_ALLOWED_HOSTS=.azurecontainerapps.io,localhost,127.0.0.1 MONGO_URI=mongodb://db:27017/app"
+            env: "DJANGO_ALLOWED_HOSTS=.azurecontainerapps.io,localhost,127.0.0.1 DJANGO_DEBUG=False DJANGO_SECRET_KEY=harbour-preflight-w09hiuf9o5g8l35biwas73 DEBUG=False DJANGO_ALLOWED_HOSTS=.azurecontainerapps.io,localhost,127.0.0.1 MONGO_URI=mongodb://db:27017/app"
             db: "mongo"
             kind: "service"
           - name: "frontend"
