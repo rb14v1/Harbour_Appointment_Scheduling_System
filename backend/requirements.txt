@@ -1,4 +1,4 @@
-Django==5.2.8
+Django==5.2.9
 djangorestframework==3.15.2
 pymongo==4.10.1
 gunicorn==23.0.0
