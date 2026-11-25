@@ -1,16 +1,35 @@
-import os
 import sys
 from pathlib import Path
 
+import environ
+from django.core.exceptions import ImproperlyConfigured
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+env = environ.Env()
+# Load a local .env file (if present) for development; real environment variables win.
+environ.Env.read_env(BASE_DIR / ".env")
 
 TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-insecure-change-me")
-DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
+REQUIRED_ENV_VARS = [
+    "DJANGO_SECRET_KEY",
+    "DJANGO_DEBUG",
+    "DJANGO_ALLOWED_HOSTS",
+    "MONGO_URI",
+    "MONGO_DB_NAME",
+]
+_missing = [name for name in REQUIRED_ENV_VARS if not env.str(name, default="").strip()]
+if _missing:
+    raise ImproperlyConfigured(
+        "Missing required environment variables: " + ", ".join(_missing)
+    )
+
+SECRET_KEY = env.str("DJANGO_SECRET_KEY")
+DEBUG = env.str("DJANGO_DEBUG").strip() == "1"
 ALLOWED_HOSTS = [
     host.strip()
-    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,backend").split(",")
+    for host in env.str("DJANGO_ALLOWED_HOSTS").split(",")
     if host.strip()
 ]
 
@@ -31,13 +50,13 @@ TEMPLATES = []
 DATABASES = {}
 
 USE_TZ = True
-TIME_ZONE = os.environ.get("APP_TIME_ZONE", "UTC")
+TIME_ZONE = env.str("APP_TIME_ZONE", default="UTC")
 
-MONGO_URI = os.environ.get("MONGO_URI", "mongodb://127.0.0.1:27017/")
+MONGO_URI = env.str("MONGO_URI")
 if TESTING:
-    MONGO_DB_NAME = os.environ.get("MONGO_TEST_DB_NAME", "appointment_scheduling_test")
+    MONGO_DB_NAME = env.str("MONGO_TEST_DB_NAME", default=env.str("MONGO_DB_NAME") + "_test")
 else:
-    MONGO_DB_NAME = os.environ.get("MONGO_DB_NAME", "appointment_scheduling")
+    MONGO_DB_NAME = env.str("MONGO_DB_NAME")
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [],
